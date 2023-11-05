@@ -137,16 +137,7 @@ def forward_backward(
 
     # TODO: Compute the forward messages
     for t in range(1, num_time_steps):
-        print(f"computing forward messages {t} ")
-        log_observation_matrix = np.log(
-            matrix_from_observation_model(
-                observation_model,
-                all_possible_hidden_states,
-                all_possible_observed_states,
-                state_to_index,
-            )
-        )  # a |X|*|Y| matrix
-        if observations[t] is None:
+        if observations[t - 1] is None:
             log_observation_vector = np.zeros(len(all_possible_hidden_states))
 
         else:
@@ -154,30 +145,31 @@ def forward_backward(
             log_observation_vector = log_observation_matrix[:, observation_index]
 
         # avoid numerical issues with the exp and log
-        log_forward_message = np.logaddexp.reduce(
-            forward_messages[t - 1].reshape(-1, 1) + log_transition_matrix, axis=0
-        )
-        log_forward_message += log_observation_vector
-        forward_messages[t] = log_forward_message
+        log_forward_message = forward_messages[t - 1][:, None]+ log_transition_matrix + log_observation_vector[:,None]
+        log_forward_message = np.sum(np.exp(log_forward_message),axis=0)
+        log_forward_message = log_prob(log_forward_message)
+
+    
+
+        forward_messages[t, :] = log_forward_message.squeeze()
 
     # backward_messages = [None] * num_time_steps
     backward_messages = np.zeros((num_time_steps, len(all_possible_hidden_states)))
-    backward_messages[-1] = np.zeros(len(all_possible_hidden_states))
+    backward_messages[-1] = np.log(np.ones(len(all_possible_hidden_states)))
     # TODO: Compute the backward messages
     for t in range(num_time_steps - 2, -1, -1):
         if observations[t + 1] is not None:
             observation_index = all_possible_observed_states.index(observations[t + 1])
             log_observation_vector = log_observation_matrix[:, observation_index]
         else:
-            log_observation_vector = log_prob(np.zeros(len(all_possible_hidden_states)))
+            log_observation_vector = np.zeros(len(all_possible_hidden_states))
 
-        log_backward_message = np.logaddexp.reduce(
-            log_transition_matrix
-            + log_observation_vector.reshape(-1, 1)
-            + backward_messages[t + 1].reshape(1, -1),
-            axis=1,
-        )
-        backward_messages[t] = log_backward_message
+        log_backward_message = backward_messages[t + 1][:,None] + log_transition_matrix.T + log_observation_vector[:,None]
+        log_backward_message = np.sum(np.exp(log_backward_message),axis=0)
+        log_backward_message = log_prob(log_backward_message)
+       
+        backward_messages[t, :] = log_backward_message.squeeze()
+        
 
     marginals = [None] * num_time_steps  # remove this
     # TODO: Compute the marginals
@@ -188,15 +180,18 @@ def forward_backward(
         else:
             log_observation_vector = np.zeros(len(all_possible_hidden_states))
 
-        log_marginal = (
-            forward_messages[t] + backward_messages[t] + log_observation_vector
-        )
-        marginal = np.exp(log_marginal)
-
+        log_marginal = forward_messages[t] + backward_messages[t] + log_observation_vector
+        log_max = np.max(log_marginal)
+        if np.isinf(log_max):  # if log_max is -inf, then all probabilities are zero
+            marginal = np.zeros(len(all_possible_hidden_states))
+        else:
+            marginal = np.exp(log_marginal)
+            
         # Convert the marginal distribution back to the Distribution form
         marginals[t] = robot.Distribution(
             {index_to_state[i]: prob for i, prob in enumerate(marginal)}
         )
+        marginals[t].renormalize()
 
     return marginals
 
