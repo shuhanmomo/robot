@@ -216,11 +216,53 @@ def Viterbi(
     """
 
     # TODO: This is for you to implement
-
     num_time_steps = len(observations)
-    estimated_hidden_states = [None] * num_time_steps  # remove this
+    state_to_index, index_to_state = create_state_index_mapping(all_possible_hidden_states)
+    log_transition_matrix = log_prob(
+        matrix_from_transition_model(transition_model, all_possible_hidden_states, state_to_index)
+    )
+    log_observation_matrix = log_prob(
+        matrix_from_observation_model(observation_model, all_possible_hidden_states, all_possible_observed_states, state_to_index)
+    )
+    
+    # Initialization from the prior distribution
+    prior_vector = distribution_to_vector(prior_distribution, state_to_index)
+    log_prior_vector = log_prob(prior_vector)
+    
+    # Initialization of the Viterbi matrix and trace_back table
+    viterbi = np.zeros((num_time_steps, len(all_possible_hidden_states)))
+    trace_back = np.zeros((num_time_steps, len(all_possible_hidden_states)), dtype=int)
+    viterbi[0] = log_prior_vector 
+    
+    # Compute the Viterbi forward process
+    for t in range(1, num_time_steps):
+        if observations[t - 1] is None:
+            log_observation_vector = np.zeros(len(all_possible_hidden_states))
 
+        else:
+            observation_index = all_possible_observed_states.index(observations[t - 1])
+            log_observation_vector = log_observation_matrix[:, observation_index]
+
+        # avoid numerical issues with the exp and log
+        log_forward_message = viterbi[t - 1][:, None]+ log_transition_matrix + log_observation_vector[:,None]
+        log_forward_max = np.max(log_forward_message,axis=0)
+        trace_back_t = np.argmax(log_forward_message,axis=0)
+
+        viterbi[t, :] = log_forward_max.squeeze()
+        trace_back[t,:] = trace_back_t.squeeze()
+        
+
+    # Traceback to find the most probable path 
+    estimated_hidden_states = [None] * len(observations)
+    last_state = np.argmax(viterbi[-1])
+    
+    for t in reversed(range(num_time_steps)):
+        estimated_hidden_states[t] = index_to_state[last_state]
+        last_state = trace_back[t, last_state]
+    
     return estimated_hidden_states
+
+
 
 
 def second_best(
